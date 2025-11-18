@@ -776,6 +776,10 @@ public:
     Value expr = op.getExpression();
     genConstraint(expr);
   }
+  
+  // void visitSV(sv::ErrorOp _op) {}
+  // void visitSV(sv::FatalOp _op) {}
+  // void visitSV(sv::MacroRefExprOp _op) {}
 
   void visitSV(Operation *op) { visitInvalidSV(op); }
 
@@ -856,7 +860,8 @@ public:
     // failure)
     TypeSwitch<Operation *, void>(op)
         // All explicitly ignored operations are defined here
-        .Case<sv::MacroDefOp, sv::MacroDeclOp, sv::VerbatimOp,
+        .Case<sv::MacroRefExprOp, sv::MacroDefOp, sv::ErrorOp, sv::FatalOp,
+              sv::MacroDeclOp, sv::VerbatimOp,
               sv::VerbatimExprOp, sv::VerbatimExprSEOp, sv::IfOp, sv::IfDefOp,
               sv::IfDefProceduralOp, sv::AlwaysOp, sv::AlwaysCombOp,
               sv::AlwaysFFOp, seq::FromClockOp, hw::OutputOp, hw::HWModuleOp>(
