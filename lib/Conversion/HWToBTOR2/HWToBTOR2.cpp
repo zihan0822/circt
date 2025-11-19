@@ -378,8 +378,8 @@ private:
     // Build and return the slice instruction
     os << opLID << " "
        << "slice"
-       << " " << sid << " " << op0LID << " " << (lowbit + width - 1) << " " << lowbit
-       << "\n";
+       << " " << sid << " " << op0LID << " " << (lowbit + width - 1) << " "
+       << lowbit << "\n";
   }
 
   // Generates a constant declaration given a value, a width and a name
@@ -718,7 +718,7 @@ public:
       size_t indexLID = lid;
       genConst(i, indexWidth, lid++);
       arrayLID =
-          genArrayStore(lid++, arrayLID, indexLID, op.getOperand(i), encoding);
+          genArrayWrite(lid++, arrayLID, indexLID, op.getOperand(i), encoding);
     }
     opLIDMap[op] = arrayLID;
   }
@@ -738,7 +738,7 @@ public:
       genConst(i, indexWidth, lid++);
       size_t dataLID = lid;
       genConst(data, dataWidth, lid++);
-      arrayLID = genArrayStore(lid++, arrayLID, indexLID, dataLID, encoding);
+      arrayLID = genArrayWrite(lid++, arrayLID, indexLID, dataLID, encoding);
       i++;
     }
     opLIDMap[op] = arrayLID;
@@ -746,36 +746,36 @@ public:
 
   void visitTypeOp(hw::ArrayGetOp op) {
     size_t dataWidth = requireSort(op.getType());
-    genArrayLoad(getOpLID((Operation *)op), op.getOperand(0), op.getOperand(1),
+    genArrayRead(getOpLID((Operation *)op), op.getOperand(0), op.getOperand(1),
                  dataWidth);
   }
 
-  size_t genArrayLoad(size_t opLID, Value array, Value index,
+  size_t genArrayRead(size_t opLID, Value array, Value index,
                       int64_t dataWidth) {
     size_t sid = getSortLID(dataWidth);
     os << opLID << " "
-       << "load"
+       << "read"
        << " " << sid << " " << getOpLID(array) << " " << getOpLID(index)
        << "\n";
     return opLID;
   }
 
-  size_t genArrayStore(size_t opLID, Value array, Value index, Value data,
+  size_t genArrayWrite(size_t opLID, Value array, Value index, Value data,
                        std::pair<size_t, size_t> encoding) {
-    return genArrayStore(opLID, getOpLID(array), getOpLID(index),
+    return genArrayWrite(opLID, getOpLID(array), getOpLID(index),
                          getOpLID(data), encoding);
   }
 
-  size_t genArrayStore(size_t opLID, size_t arrayLID, size_t indexLID,
+  size_t genArrayWrite(size_t opLID, size_t arrayLID, size_t indexLID,
                        Value data, std::pair<size_t, size_t> encoding) {
-    return genArrayStore(opLID, arrayLID, indexLID, getOpLID(data), encoding);
+    return genArrayWrite(opLID, arrayLID, indexLID, getOpLID(data), encoding);
   }
 
-  size_t genArrayStore(size_t opLID, size_t arrayLID, size_t indexLID,
+  size_t genArrayWrite(size_t opLID, size_t arrayLID, size_t indexLID,
                        size_t dataLID, std::pair<size_t, size_t> encoding) {
     size_t sid = getSortLID(encoding);
     os << opLID << " "
-       << "store"
+       << "write"
        << " " << sid << " " << arrayLID << " " << indexLID << " " << dataLID
        << "\n";
     return opLID;
@@ -796,14 +796,14 @@ public:
     auto arrayType = dyn_cast<seq::FirMemType>(mem.getType());
     auto [_, dataWidth] = encodeArraySort(arrayType);
     size_t opLID = getOpLID((Operation *)op);
-    genArrayLoad(opLID, mem, op.getAddress(), dataWidth);
+    genArrayRead(opLID, mem, op.getAddress(), dataWidth);
   }
 
   void visit(seq::FirMemWriteOp op) {
     auto mem = op.getMemory();
     auto memType = encodeArraySort(dyn_cast<seq::FirMemType>(mem.getType()));
     size_t opLID = getOpLID((Operation *)op);
-    genArrayStore(opLID, mem, op.getAddress(), op.getData(), memType);
+    genArrayWrite(opLID, mem, op.getAddress(), op.getData(), memType);
   }
 
   void visit(seq::FirMemReadWriteOp op) {
@@ -811,8 +811,8 @@ public:
           data = op.getWriteData();
     auto memType = encodeArraySort(dyn_cast<seq::FirMemType>(mem.getType()));
     auto [_, dataWidth] = memType;
-    genArrayStore(lid++, mem, address, data, memType);
-    size_t readLID = genArrayLoad(lid++, mem, address, dataWidth);
+    genArrayWrite(lid++, mem, address, data, memType);
+    size_t readLID = genArrayRead(lid++, mem, address, dataWidth);
     size_t modeLID = getOpLID(op.getMode());
     genIte(op, modeLID, getOpLID(data), readLID, dataWidth);
   }
