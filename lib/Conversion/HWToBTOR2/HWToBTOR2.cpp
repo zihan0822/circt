@@ -700,35 +700,30 @@ public:
        << "\n";
   }
 
-  // void visitTypeOp(hw::ArrayCreateOp op) {
-  //   auto type = dyn_cast<hw::ArrayType>(op.getType());
-  //   genArraySort(encodeArraySort(type));
-  // }
-
   void visitTypeOp(hw::ArrayGetOp op) {
     size_t dataWidth = requireSort(op.getType());
-    genArrayLoad(op, op.getOperand(0), op.getOperand(1), dataWidth);
+    genArrayLoad(getOpLID((Operation *)op), op.getOperand(0), op.getOperand(1),
+                 dataWidth);
   }
 
-  void genArrayLoad(Operation *srcop, Value array, Value index,
-                    int64_t dataWidth) {
-    size_t opLID = getOpLID(srcop);
+  size_t genArrayLoad(size_t opLID, Value array, Value index,
+                      int64_t dataWidth) {
     size_t sid = getSortLID(dataWidth);
     os << opLID << " "
        << "load"
        << " " << sid << " " << getOpLID(array) << " " << getOpLID(index)
        << "\n";
+    return opLID;
   }
 
-  void genArrayStore(Operation *srcop, Value array, Value index, Value data,
-                     std::pair<size_t, size_t> encoding) {
-    size_t opLID = getOpLID(scrop);
+  size_t genArrayStore(size_t opLID, Value array, Value index, Value data,
+                       std::pair<size_t, size_t> encoding) {
     size_t sid = getSortLID(encoding);
-    size_t arrayLID = getOpLID(array);
     os << opLID << " "
        << "store"
        << " " << sid << " " << getOpLID(array) << " " << getOpLID(index) << " "
        << getOpLID(data) << "\n";
+    return opLID;
   }
 
   void visitTypeOp(Operation *op) { visitInvalidTypeOp(op); }
@@ -736,7 +731,8 @@ public:
   // Handles non-hw operations
   void visitInvalidTypeOp(Operation *op) {
     llvm::TypeSwitch<Operation *, void>(op)
-        .Case<seq::FirMemReadOp>([&](auto expr) { visit(expr); })
+        .Case<seq::FirMemReadOp, seq::FirMemWriteOp, seq::FirMemReadWriteOp>(
+            [&](auto expr) { visit(expr); })
         .Default([&](auto expr) { dispatchCombinationalVisitor(op); });
   }
 
@@ -744,10 +740,27 @@ public:
     Value mem = op.getMemory();
     auto arrayType = dyn_cast<seq::FirMemType>(mem.getType());
     auto [_, dataWidth] = encodeArraySort(arrayType);
-    genArrayLoad(op, mem, op.getAddress(), dataWidth);
+    size_t opLID = getOpLID((Operation *)op);
+    genArrayLoad(opLID, mem, op.getAddress(), dataWidth);
   }
 
-  void visit(seq::FirMemWriteOp op) { Value mem = op.getMemory(); }
+  void visit(seq::FirMemWriteOp op) {
+    auto mem = op.getMemory();
+    auto memType = encodeArraySort(dyn_cast<seq::FirMemType>(mem.getType()));
+    size_t opLID = getOpLID((Operation *)op);
+    genArrayStore(opLID, mem, op.getAddress(), op.getData(), memType);
+  }
+
+  void visit(seq::FirMemReadWriteOp op) {
+    Value mem = op.getMemory(), address = op.getAddress(),
+          data = op.getWriteData();
+    auto memType = encodeArraySort(dyn_cast<seq::FirMemType>(mem.getType()));
+    auto [_, dataWidth] = memType;
+    genArrayStore(lid++, mem, address, data, memType);
+    size_t readLID = genArrayLoad(lid++, mem, address, dataWidth);
+    size_t modeLID = getOpLID(op.getMode());
+    genIte(op, modeLID, getOpLID(data), readLID, dataWidth);
+  }
 
   // Binary operations are all emitted the same way, so we can group them into
   // a single method.
