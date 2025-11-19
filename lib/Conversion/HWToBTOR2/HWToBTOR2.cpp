@@ -89,6 +89,8 @@ private:
   // have been converted to btor2 before we can emit the transition.
   SmallVector<Operation *> regOps;
 
+  SmallVector<hw::PortInfo> outputPorts;
+
   // Used to perform a DFS search through the module to declare all operands
   // before they are used
   llvm::SmallMapVector<Operation *, OperandRange::iterator, 16> worklist;
@@ -693,6 +695,20 @@ public:
     genConst(value, w, op);
   }
 
+  void visit(hw::OutputOp op) {
+    for (int i = 0; i < outputPorts.size(); i++) {
+      genOutput(op, outputPorts[i], op.getOperand(i));
+    }
+  }
+
+  void genOutput(Operation *op, hw::PortInfo port, Value value) {
+    StringRef portName = port.getName();
+    size_t valueLID = getOpLID(value);
+    os << lid++ << " "
+       << "output"
+       << " " << valueLID << " " << portName << "\n";
+  }
+
   // Wires can generally be ignored in bto2, however we do need
   // to keep track of the new alias it creates
   void visit(hw::WireOp op) {
@@ -1051,7 +1067,8 @@ public:
     // Typeswitch is used here because other seq types will be supported
     // like all operations relating to memories and CompRegs
     TypeSwitch<Operation *, void>(op)
-        .Case<seq::FirRegOp, hw::WireOp>([&](auto expr) { visit(expr); })
+        .Case<seq::FirRegOp, hw::WireOp, hw::OutputOp>(
+            [&](auto expr) { visit(expr); })
         .Default([&](auto expr) { visitUnsupportedOp(op); });
   }
 
@@ -1123,7 +1140,7 @@ public:
               sv::MacroDeclOp, sv::VerbatimOp, sv::VerbatimExprOp,
               sv::VerbatimExprSEOp, sv::IfOp, sv::IfDefOp,
               sv::IfDefProceduralOp, sv::AlwaysOp, sv::AlwaysCombOp,
-              sv::AlwaysFFOp, seq::FromClockOp, hw::OutputOp, hw::HWModuleOp>(
+              sv::AlwaysFFOp, seq::FromClockOp, hw::HWModuleOp>(
             [&](auto expr) { ignore(op); })
 
         // Make sure that the design only contains one clock
@@ -1151,6 +1168,9 @@ void ConvertHWToBTOR2Pass::runOnOperation() {
   getOperation().walk([&](hw::HWModuleOp module) {
     // Start by extracting the inputs and generating appropriate instructions
     for (auto &port : module.getPortList()) {
+      if (port.isOutput()) {
+        outputPorts.push_back(port);
+      }
       visit(port);
     }
 
