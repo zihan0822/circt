@@ -296,8 +296,10 @@ private:
   void genConst(int64_t value, size_t width, Operation *op) {
     // For now we're going to assume that the name isn't taken, given that hw is
     // already in SSA form
-    size_t opLID = getOpLID(op);
+    genConst(value, width, getOpLID(op));
+  }
 
+  void genConst(int64_t value, size_t width, size_t opLID) {
     // Retrieve the lid associated with the sort (sid)
     size_t sid = getSortLID(width);
 
@@ -694,10 +696,52 @@ public:
     genArraySort(encodeArraySort(type));
     size_t sid = getSortLID(type);
     size_t opLID = getOpLID((Operation *)mem);
+    genArrayState(opLID, sid);
+  }
+
+  void genArrayState(size_t opLID, size_t sid) {
     os << opLID << " "
        << "state"
        << " " << sid << " "
        << "\n";
+  }
+
+  void visitTypeOp(hw::ArrayCreateOp op) {
+    auto type = dyn_cast<hw::ArrayType>(op.getType());
+    auto encoding = encodeArraySort(type);
+    genArraySort(encoding);
+    size_t sid = getSortLID(encoding);
+    auto [indexWidth, dataWidth] = encoding;
+    size_t arrayLID = lid;
+    genArrayState(lid++, sid);
+    for (int i = 0, e = type.getNumElements(); i < e; i++) {
+      size_t indexLID = lid;
+      genConst(i, indexWidth, lid++);
+      arrayLID =
+          genArrayStore(lid++, arrayLID, indexLID, op.getOperand(i), encoding);
+    }
+    opLIDMap[op] = arrayLID;
+  }
+
+  void visitTypeOp(hw::AggregateConstantOp op) {
+    auto type = dyn_cast<hw::ArrayType>(op.getType());
+    auto encoding = encodeArraySort(type);
+    genArraySort(encoding);
+    size_t sid = getSortLID(encoding);
+    auto [indexWidth, dataWidth] = encoding;
+    size_t arrayLID = lid;
+    genArrayState(lid++, sid);
+    int i = 0;
+    for (auto dataAttr : op.getFields()) {
+      int64_t data = dyn_cast<IntegerAttr>(dataAttr).getValue().getZExtValue();
+      size_t indexLID = lid;
+      genConst(i, indexWidth, lid++);
+      size_t dataLID = lid;
+      genConst(data, dataWidth, lid++);
+      arrayLID = genArrayStore(lid++, arrayLID, indexLID, dataLID, encoding);
+      i++;
+    }
+    opLIDMap[op] = arrayLID;
   }
 
   void visitTypeOp(hw::ArrayGetOp op) {
@@ -718,11 +762,22 @@ public:
 
   size_t genArrayStore(size_t opLID, Value array, Value index, Value data,
                        std::pair<size_t, size_t> encoding) {
+    return genArrayStore(opLID, getOpLID(array), getOpLID(index),
+                         getOpLID(data), encoding);
+  }
+
+  size_t genArrayStore(size_t opLID, size_t arrayLID, size_t indexLID,
+                       Value data, std::pair<size_t, size_t> encoding) {
+    return genArrayStore(opLID, arrayLID, indexLID, getOpLID(data), encoding);
+  }
+
+  size_t genArrayStore(size_t opLID, size_t arrayLID, size_t indexLID,
+                       size_t dataLID, std::pair<size_t, size_t> encoding) {
     size_t sid = getSortLID(encoding);
     os << opLID << " "
        << "store"
-       << " " << sid << " " << getOpLID(array) << " " << getOpLID(index) << " "
-       << getOpLID(data) << "\n";
+       << " " << sid << " " << arrayLID << " " << indexLID << " " << dataLID
+       << "\n";
     return opLID;
   }
 
