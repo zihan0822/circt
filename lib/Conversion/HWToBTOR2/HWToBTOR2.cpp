@@ -378,7 +378,7 @@ private:
     // Build and return the slice instruction
     os << opLID << " "
        << "slice"
-       << " " << sid << " " << op0LID << " " << (width - 1) << " " << lowbit
+       << " " << sid << " " << op0LID << " " << (lowbit + width - 1) << " " << lowbit
        << "\n";
   }
 
