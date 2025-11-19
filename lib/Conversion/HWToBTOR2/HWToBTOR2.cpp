@@ -447,6 +447,15 @@ private:
     genIte(srcop, condLID, tLID, fLID, width);
   }
 
+  void genIte(size_t opLID, size_t condLID, size_t tLID, size_t fLID,
+              int64_t width) {
+    // Retrieve the operand lids, assuming they were emitted
+    size_t sid = getSortLID(width);
+    os << opLID << " "
+       << "ite"
+       << " " << sid << " " << condLID << " " << tLID << " " << fLID << "\n";
+  }
+
   // Generate an ite instruction (if then else) given a predicate, two values
   // and a res width
   void genIte(Operation *srcop, size_t condLID, size_t tLID, size_t fLID,
@@ -549,8 +558,6 @@ private:
     return width;
   }
 
-  // Generates the transitions required to finalize the register to state
-  // transition system conversion
   void finalizeRegVisit(Operation *op) {
     int64_t width;
     Value next, reset, resetVal;
@@ -599,7 +606,8 @@ private:
       // with next)
       size_t resetLID = noLID;
       if (BlockArgument barg = dyn_cast<BlockArgument>(reset)) {
-        // Extract the block argument index and use that to get the line number
+        // Extract the block argument index and use that to get the line
+        // number
         size_t argIdx = barg.getArgNumber();
 
         // Check that the extracted argument is in range before using it
@@ -627,9 +635,12 @@ private:
       // i.e. reg <= reset ? 0 : next
       genIte(next.getDefiningOp(), resetLID, resetValLID, nextLID, width);
     } else {
-      // Assign a new LID to next and perform a sanity check
-      setOpLID(next.getDefiningOp());
-      assert(nextLID != noLID);
+      // Sanity check: next should have been assigned
+      if (nextLID == noLID) {
+        next.getDefiningOp()->emitError(
+            "Register input does not point to a valid op!");
+        return;
+      }
     }
 
     // Finally generate the next statement
@@ -904,7 +915,7 @@ public:
   }
 
   // Visitors for the binary ops
-  void visitComb(comb::AddOp op) { visitVariadicOp(op, "add"); }
+  void visitComb(comb::AddOp op) { visitBinOp(op, "add"); }
   void visitComb(comb::SubOp op) { visitBinOp(op, "sub"); }
   void visitComb(comb::MulOp op) { visitVariadicOp(op, "mul"); }
   void visitComb(comb::DivSOp op) { visitBinOp(op, "sdiv"); }
