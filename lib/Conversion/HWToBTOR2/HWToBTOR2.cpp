@@ -52,7 +52,7 @@ private:
   raw_ostream &os;
 
   // Create a counter that attributes a unique id to each generated btor2 line
-  size_t lid = 1;          // btor2 line identifiers usually start at 1
+  size_t lid = 1; // btor2 line identifiers usually start at 1
   size_t nclocks = 0;
 
   // Create maps to keep track of lid associations
@@ -61,7 +61,7 @@ private:
   // Keeps track of the ids associated to each declared sort
   // This is used in order to guarantee that sorts are unique and to allow for
   // instructions to reference the given sorts (key: width, value: LID)
-  DenseMap<size_t, size_t> sortToLIDMap;
+  DenseMap<std::pair<size_t, size_t>, size_t> sortToLIDMap;
   // Keeps track of {constant, width} -> LID mappings
   // This is used in order to avoid duplicating constant declarations
   // in the output btor2. It is also useful when tracking
@@ -170,6 +170,14 @@ private:
     return op;
   }
 
+  std::pair<size_t, size_t> encodeBitVecSort(size_t w) {
+    return std::make_pair(0, w);
+  }
+
+  std::pair<size_t, size_t> encodeArraySort(size_t depth, size_t width) {
+    return std::make_pair(llvm::Log2_64_Ceil(depth), width);
+  }
+
   // Updates or creates an entry for the given operation
   // associating it with the current lid
   void setOpAlias(Operation *alias, Operation *op) {
@@ -180,7 +188,24 @@ private:
   // If so, its lid will be returned
   // Otherwise -1 will be returned
   size_t getSortLID(size_t w) {
-    if (auto it = sortToLIDMap.find(w); it != sortToLIDMap.end())
+    if (auto it = sortToLIDMap.find(encodeBitVecSort(w));
+        it != sortToLIDMap.end())
+      return it->second;
+
+    // If no lid was found return -1
+    return noLID;
+  }
+
+  size_t getSortLID(hw::ArrayType type) {
+    return getSortLID(encodeArraySort(type));
+  }
+
+  size_t getSortLID(seq::FirMemType type) {
+    return getSortLID(encodeArraySort(type));
+  }
+
+  size_t getSortLID(std::pair<size_t, size_t> encoding) {
+    if (auto it = sortToLIDMap.find(encoding); it != sortToLIDMap.end())
       return it->second;
 
     // If no lid was found return -1
@@ -191,7 +216,14 @@ private:
   size_t setSortLID(size_t w) {
     size_t sortlid = lid;
     // Add the width to the declared sorts along with the associated line id
-    sortToLIDMap[w] = lid++;
+    sortToLIDMap[encodeBitVecSort(w)] = lid++;
+    return sortlid;
+  }
+
+  size_t setSortLID(std::pair<size_t, size_t> encoding) {
+    size_t sortlid = lid;
+    // Add the width to the declared sorts along with the associated line id
+    sortToLIDMap[encoding] = lid++;
     return sortlid;
   }
 
@@ -232,10 +264,27 @@ private:
        << " " << type << " " << width << "\n";
   }
 
+  void genArraySort(std::pair<size_t, size_t> encoding) {
+    if (getSortLID(encoding) != noLID) {
+      return;
+    }
+    auto [indexWidth, dataWidth] = encoding;
+    genSort("bitvec", indexWidth);
+    genSort("bitvec", dataWidth);
+    size_t indexSID = getSortLID(indexWidth);
+    size_t dataSID = getSortLID(dataWidth);
+    size_t sortlid = setSortLID(encoding);
+    os << sortlid << " "
+       << "sort"
+       << " "
+       << "array"
+       << " " << indexSID << " " << dataSID << "\n";
+  }
+
   // Generates an input declaration given a sort lid and a name.
   void genInput(size_t inlid, size_t width, StringRef name) {
     // Retrieve the lid associated with the sort (sid)
-    size_t sid = sortToLIDMap.at(width);
+    size_t sid = getSortLID(width);
 
     // Generate input declaration
     os << inlid << " "
@@ -250,7 +299,7 @@ private:
     size_t opLID = getOpLID(op);
 
     // Retrieve the lid associated with the sort (sid)
-    size_t sid = sortToLIDMap.at(width);
+    size_t sid = getSortLID(width);
 
     os << opLID << " "
        << "constd"
@@ -265,7 +314,7 @@ private:
       return zlid;
 
     // Retrieve the lid associated with the sort (sid)
-    size_t sid = sortToLIDMap.at(width);
+    size_t sid = getSortLID(width);
 
     // Associate an lid to the new constant
     size_t constlid = setConstLID(0, width);
@@ -282,7 +331,7 @@ private:
   void genInit(Operation *reg, Value initVal, int64_t width) {
     // Retrieve the various identifiers we require for this
     size_t regLID = getOpLID(reg);
-    size_t sid = sortToLIDMap.at(width);
+    size_t sid = getSortLID(width);
     size_t initValLID = getOpLID(initVal);
 
     // Build and emit the string (the lid here doesn't need to be associated to
@@ -300,7 +349,7 @@ private:
     size_t opLID = getOpLID(binop);
 
     // Find the sort's lid
-    size_t sid = sortToLIDMap.at(width);
+    size_t sid = getSortLID(width);
 
     // Assuming that the operands were already emitted
     // Find the LIDs associated to the operands
@@ -318,7 +367,7 @@ private:
     size_t opLID = getOpLID(srcop);
 
     // Find the sort's associated lid in order to use it in the instruction
-    size_t sid = sortToLIDMap.at(width);
+    size_t sid = getSortLID(width);
 
     // Assuming that the operand has already been emitted
     // Find the LID associated to the operand
@@ -338,7 +387,7 @@ private:
     size_t opLID = getOpLID(srcop);
 
     // Retrieve the lid associated with the sort (sid)
-    size_t sid = sortToLIDMap.at(width);
+    size_t sid = getSortLID(width);
 
     // Assuming that the operand has already been emitted
     // Find the LID associated to the operand
@@ -404,7 +453,7 @@ private:
     size_t opLID = getOpLID(srcop);
 
     // Retrieve the lid associated with the sort (sid)
-    size_t sid = sortToLIDMap.at(width);
+    size_t sid = getSortLID(width);
 
     // Build and return the ite instruction
     os << opLID << " "
@@ -427,7 +476,7 @@ private:
     size_t opLID = getOpLID(srcop);
 
     // Retrieve the lid associated with the sort (sid)
-    size_t sid = sortToLIDMap.at(1);
+    size_t sid = getSortLID(1);
 
     // Build and emit the implies operation
     os << opLID << " "
@@ -441,7 +490,7 @@ private:
     size_t opLID = getOpLID(srcop);
 
     // Retrieve the lid associated with the sort (sid)
-    size_t sid = sortToLIDMap.at(width);
+    size_t sid = getSortLID(width);
 
     // Build and return the state instruction
     os << opLID << " "
@@ -453,7 +502,7 @@ private:
   // LID
   void genNext(Value next, Operation *reg, int64_t width) {
     // Retrieve the lid associated with the sort (sid)
-    size_t sid = sortToLIDMap.at(width);
+    size_t sid = getSortLID(width);
 
     // Retrieve the LIDs associated to reg and next
     size_t regLID = getOpLID(reg);
@@ -464,6 +513,21 @@ private:
     os << lid++ << " "
        << "next"
        << " " << sid << " " << regLID << " " << nextLID << "\n";
+  }
+
+  // Returns a tuple of array index_width and data_width
+  std::pair<size_t, size_t> encodeArraySort(hw::ArrayType type) {
+    size_t dataWidth = hw::getBitWidth(type.getElementType());
+    return encodeArraySort(type.getNumElements(), dataWidth);
+  }
+
+  std::pair<size_t, size_t> encodeArraySort(seq::FirMemType type) {
+    return encodeArraySort(type.getDepth(), type.getWidth());
+  }
+
+  void requireArraySort(mlir::Type type) {
+    auto encoding = encodeArraySort(dyn_cast<hw::ArrayType>(type));
+    genArraySort(encoding);
   }
 
   // Verifies that the sort required for the given operation's btor2 emission
@@ -625,13 +689,65 @@ public:
     setOpAlias(op, defOp);
   }
 
+  void visit(seq::FirMemOp mem) {
+    auto type = dyn_cast<seq::FirMemType>(mem.getType());
+    genArraySort(encodeArraySort(type));
+    size_t sid = getSortLID(type);
+    size_t opLID = getOpLID((Operation *)mem);
+    os << opLID << " "
+       << "state"
+       << " " << sid << " "
+       << "\n";
+  }
+
+  // void visitTypeOp(hw::ArrayCreateOp op) {
+  //   auto type = dyn_cast<hw::ArrayType>(op.getType());
+  //   genArraySort(encodeArraySort(type));
+  // }
+
+  void visitTypeOp(hw::ArrayGetOp op) {
+    size_t dataWidth = requireSort(op.getType());
+    genArrayLoad(op, op.getOperand(0), op.getOperand(1), dataWidth);
+  }
+
+  void genArrayLoad(Operation *srcop, Value array, Value index,
+                    int64_t dataWidth) {
+    size_t opLID = getOpLID(srcop);
+    size_t sid = getSortLID(dataWidth);
+    os << opLID << " "
+       << "load"
+       << " " << sid << " " << getOpLID(array) << " " << getOpLID(index)
+       << "\n";
+  }
+
+  void genArrayStore(Operation *srcop, Value array, Value index, Value data,
+                     std::pair<size_t, size_t> encoding) {
+    size_t opLID = getOpLID(scrop);
+    size_t sid = getSortLID(encoding);
+    size_t arrayLID = getOpLID(array);
+    os << opLID << " "
+       << "store"
+       << " " << sid << " " << getOpLID(array) << " " << getOpLID(index) << " "
+       << getOpLID(data) << "\n";
+  }
+
   void visitTypeOp(Operation *op) { visitInvalidTypeOp(op); }
 
   // Handles non-hw operations
   void visitInvalidTypeOp(Operation *op) {
-    // Try comb ops
-    dispatchCombinationalVisitor(op);
+    llvm::TypeSwitch<Operation *, void>(op)
+        .Case<seq::FirMemReadOp>([&](auto expr) { visit(expr); })
+        .Default([&](auto expr) { dispatchCombinationalVisitor(op); });
   }
+
+  void visit(seq::FirMemReadOp op) {
+    Value mem = op.getMemory();
+    auto arrayType = dyn_cast<seq::FirMemType>(mem.getType());
+    auto [_, dataWidth] = encodeArraySort(arrayType);
+    genArrayLoad(op, mem, op.getAddress(), dataWidth);
+  }
+
+  void visit(seq::FirMemWriteOp op) { Value mem = op.getMemory(); }
 
   // Binary operations are all emitted the same way, so we can group them into
   // a single method.
@@ -776,10 +892,6 @@ public:
     Value expr = op.getExpression();
     genConstraint(expr);
   }
-  
-  // void visitSV(sv::ErrorOp _op) {}
-  // void visitSV(sv::FatalOp _op) {}
-  // void visitSV(sv::MacroRefExprOp _op) {}
 
   void visitSV(Operation *op) { visitInvalidSV(op); }
 
@@ -861,8 +973,8 @@ public:
     TypeSwitch<Operation *, void>(op)
         // All explicitly ignored operations are defined here
         .Case<sv::MacroRefExprOp, sv::MacroDefOp, sv::ErrorOp, sv::FatalOp,
-              sv::MacroDeclOp, sv::VerbatimOp,
-              sv::VerbatimExprOp, sv::VerbatimExprSEOp, sv::IfOp, sv::IfDefOp,
+              sv::MacroDeclOp, sv::VerbatimOp, sv::VerbatimExprOp,
+              sv::VerbatimExprSEOp, sv::IfOp, sv::IfDefOp,
               sv::IfDefProceduralOp, sv::AlwaysOp, sv::AlwaysCombOp,
               sv::AlwaysFFOp, seq::FromClockOp, hw::OutputOp, hw::HWModuleOp>(
             [&](auto expr) { ignore(op); })
@@ -898,7 +1010,7 @@ void ConvertHWToBTOR2Pass::runOnOperation() {
     // Previsit all registers in the module in order to avoid dependency cylcles
     module.walk([&](Operation *op) {
       TypeSwitch<Operation *, void>(op)
-          .Case<seq::FirRegOp, seq::CompRegOp>([&](auto reg) {
+          .Case<seq::FirRegOp, seq::CompRegOp, seq::FirMemOp>([&](auto reg) {
             visit(reg);
             handledOps.insert(op);
           })
