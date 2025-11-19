@@ -866,6 +866,18 @@ public:
     genIte(op, pred, tval, fval, w);
   }
 
+  void visitComb(comb::ReplicateOp op) {
+    int64_t resultWidth = requireSort(op.getType());
+    int64_t srcWidth = requireSort(op.getInput().getType());
+    int64_t shiftAmount = resultWidth - srcWidth;
+    size_t opLID = getOpLID((Operation *)op);
+    size_t srcLID = getOpLID(op.getInput());
+    os << opLID << " "
+       << "sext"
+       << " " << getSortLID(resultWidth) << " " << srcLID << " " << shiftAmount
+       << "\n";
+  }
+
   void visitComb(Operation *op) { visitInvalidComb(op); }
 
   // Try sv ops when comb is done
