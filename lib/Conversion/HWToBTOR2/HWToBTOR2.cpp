@@ -829,46 +829,94 @@ public:
     genBinOp(inst, op, op1, op2, w);
   }
 
+  // Expands a variadic operation into multiple binary operation instructions
+  void genVariadicOp(StringRef inst, Operation *op, size_t width) {
+    auto operands = op->getOperands();
+    size_t sid = getSortLID(width);
+
+    if (operands.size() == 0) {
+      op->emitError("variadic operations with no operands are not supported");
+      return;
+    }
+
+    // If there's only one operand, then we don't generate a BTOR2 instruction,
+    // we just reuse the operand's existing LID
+    if (operands.size() == 1) {
+      auto existingLID = getOpLID(operands[0]);
+      // Check that we haven't somehow got a value that doesn't have a
+      // corresponding LID
+      assert(existingLID != noLID);
+      opLIDMap[op] = existingLID;
+      return;
+    }
+
+    // Special case for concat since intermediate results need different sorts
+    auto isConcat = isa<comb::ConcatOp>(op);
+
+    // Unroll variadic op into series of binary ops
+    // This will represent the previous operand in the chain:
+    auto prevOperandLID = getOpLID(operands[0]);
+
+    // Track the current width so we can work out new types if this is a concat
+    auto currentWidth = operands[0].getType().getIntOrFloatBitWidth();
+
+    for (auto operand : operands.drop_front()) {
+      // Manually increment lid since we need multiple per op
+
+      if (isConcat) {
+        // For concat, the sort width increases with each operand
+        currentWidth += operand.getType().getIntOrFloatBitWidth();
+        // Ensure that the sort exists
+        genSort("bitvec", currentWidth);
+      }
+
+      auto thisLid = lid++;
+      auto thisOperandLID = getOpLID(operand);
+      os << thisLid << " " << inst << " "
+         << (isConcat ? getSortLID(currentWidth) : sid) << " " << prevOperandLID
+         << " " << thisOperandLID << "\n";
+      prevOperandLID = thisLid;
+    }
+
+    // Send lookups of the op's LID to the final binary op in the chain
+    opLIDMap[op] = prevOperandLID;
+  }
+
+  template <typename Op> void visitVariadicOp(Op op, StringRef inst) {
+    // Generate the sort
+    int64_t w = requireSort(op.getType());
+
+    // Generate the line
+    genVariadicOp(inst, op, w);
+  }
+  // Binary operations are all emitted the same way, so we can group them into
+  // a single method.
+  template <typename Op> void visitBinOp(Op op, StringRef inst) {
+    // Generate the sort
+    int64_t w = requireSort(op.getType());
+
+    // Start by extracting the operands
+    Value op1 = op.getOperand(0);
+    Value op2 = op.getOperand(1);
+
+    // Generate the line
+    genBinOp(inst, op, op1, op2, w);
+  }
+
   // Visitors for the binary ops
-  void visitComb(comb::AddOp op) {
-    visitBinOp(op, "add", requireSort(op.getType()));
-  }
-  void visitComb(comb::SubOp op) {
-    visitBinOp(op, "sub", requireSort(op.getType()));
-  }
-  void visitComb(comb::MulOp op) {
-    visitBinOp(op, "mul", requireSort(op.getType()));
-  }
-  void visitComb(comb::DivSOp op) {
-    visitBinOp(op, "sdiv", requireSort(op.getType()));
-  }
-  void visitComb(comb::DivUOp op) {
-    visitBinOp(op, "udiv", requireSort(op.getType()));
-  }
-  void visitComb(comb::ModSOp op) {
-    visitBinOp(op, "smod", requireSort(op.getType()));
-  }
-  void visitComb(comb::ShlOp op) {
-    visitBinOp(op, "sll", requireSort(op.getType()));
-  }
-  void visitComb(comb::ShrUOp op) {
-    visitBinOp(op, "srl", requireSort(op.getType()));
-  }
-  void visitComb(comb::ShrSOp op) {
-    visitBinOp(op, "sra", requireSort(op.getType()));
-  }
-  void visitComb(comb::AndOp op) {
-    visitBinOp(op, "and", requireSort(op.getType()));
-  }
-  void visitComb(comb::OrOp op) {
-    visitBinOp(op, "or", requireSort(op.getType()));
-  }
-  void visitComb(comb::XorOp op) {
-    visitBinOp(op, "xor", requireSort(op.getType()));
-  }
-  void visitComb(comb::ConcatOp op) {
-    visitBinOp(op, "concat", requireSort(op.getType()));
-  }
+  void visitComb(comb::AddOp op) { visitVariadicOp(op, "add"); }
+  void visitComb(comb::SubOp op) { visitBinOp(op, "sub"); }
+  void visitComb(comb::MulOp op) { visitVariadicOp(op, "mul"); }
+  void visitComb(comb::DivSOp op) { visitBinOp(op, "sdiv"); }
+  void visitComb(comb::DivUOp op) { visitBinOp(op, "udiv"); }
+  void visitComb(comb::ModSOp op) { visitBinOp(op, "smod"); }
+  void visitComb(comb::ShlOp op) { visitBinOp(op, "sll"); }
+  void visitComb(comb::ShrUOp op) { visitBinOp(op, "srl"); }
+  void visitComb(comb::ShrSOp op) { visitBinOp(op, "sra"); }
+  void visitComb(comb::AndOp op) { visitVariadicOp(op, "and"); }
+  void visitComb(comb::OrOp op) { visitVariadicOp(op, "or"); }
+  void visitComb(comb::XorOp op) { visitVariadicOp(op, "xor"); }
+  void visitComb(comb::ConcatOp op) { visitVariadicOp(op, "concat"); }
 
   // Extract ops translate to a slice operation in btor2 in a one-to-one manner
   void visitComb(comb::ExtractOp op) {
