@@ -77,4 +77,4 @@ circuit Counter :
 ; CHECK:  24 bad 23
 ; CHECK:  25 ite 3 2 12 15
 ; CHECK:  26 next 3 4 25
-; CHECK:  28 next 1 6 27
+; CHECK:  27 next 1 6 18
