@@ -89,8 +89,8 @@ private:
   // This is necessary, as we need to wait for the `next` operation to
   // have been converted to btor2 before we can emit the transition.
   SmallVector<Operation *> regOps;
-
   SmallVector<hw::PortInfo> outputPorts;
+  SmallVector<Operation *> memOps;
 
   // Used to perform a DFS search through the module to declare all operands
   // before they are used
@@ -192,6 +192,8 @@ private:
   size_t getArrayStateLID(Value op) {
     return memCurrentViewLIDs[op.getDefiningOp()];
   }
+
+  size_t getArrayStateLID(Operation *op) { return memCurrentViewLIDs[op]; }
 
   // Updates or creates an entry for the given operation
   // associating it with the current lid
@@ -542,6 +544,21 @@ private:
        << " " << sid << " " << regLID << " " << nextLID << "\n";
   }
 
+  void genNext(Operation *reg, size_t nextLID,
+               std::pair<size_t, size_t> encoding) {
+    // Retrieve the lid associated with the sort (sid)
+    size_t sid = getSortLID(encoding);
+
+    // Retrieve the LIDs associated to reg and next
+    size_t regLID = getOpLID(reg);
+
+    // Build and return the next instruction
+    // Also update the lid as this instruction is not associated to an mlir op
+    os << lid++ << " "
+       << "next"
+       << " " << sid << " " << regLID << " " << nextLID << "\n";
+  }
+
   // Returns a tuple of array index_width and data_width
   std::pair<size_t, size_t> encodeArraySort(hw::ArrayType type) {
     size_t dataWidth = hw::getBitWidth(type.getElementType());
@@ -661,6 +678,12 @@ private:
     genNext(op, nextLID, width);
   }
 
+  void finalizeArrayUpdate(Operation *op) {
+    auto type = dyn_cast<seq::FirMemOp>(op).getType();
+    auto encoding = encodeArraySort(type);
+    genNext(op, getArrayStateLID(op), encoding);
+  }
+
 public:
   /// Visitor Methods used later on for pattern matching
 
@@ -708,7 +731,7 @@ public:
   }
 
   void visit(hw::OutputOp op) {
-    for (int i = 0; i < outputPorts.size(); i++) {
+    for (size_t i = 0; i < outputPorts.size(); i++) {
       genOutput(op, outputPorts[i], op.getOperand(i));
     }
   }
@@ -731,10 +754,11 @@ public:
   }
 
   void visit(seq::FirMemOp mem) {
+    memOps.push_back(mem);
     auto type = dyn_cast<seq::FirMemType>(mem.getType());
     genArraySort(encodeArraySort(type));
     size_t sid = getSortLID(type);
-    size_t opLID = lid++;
+    size_t opLID = getOpLID((Operation *)mem);
     updateMemView(mem, opLID);
     genArrayState(opLID, sid);
   }
@@ -958,7 +982,7 @@ public:
   }
 
   // Visitors for the binary ops
-  void visitComb(comb::AddOp op) { visitBinOp(op, "add"); }
+  void visitComb(comb::AddOp op) { visitVariadicOp(op, "add"); }
   void visitComb(comb::SubOp op) { visitBinOp(op, "sub"); }
   void visitComb(comb::MulOp op) { visitVariadicOp(op, "mul"); }
   void visitComb(comb::DivSOp op) { visitBinOp(op, "sdiv"); }
@@ -1260,6 +1284,10 @@ void ConvertHWToBTOR2Pass::runOnOperation() {
     // Iterate through the registers and generate the `next` instructions
     for (size_t i = 0; i < regOps.size(); ++i) {
       finalizeRegVisit(regOps[i]);
+    }
+
+    for (size_t i = 0; i < memOps.size(); ++i) {
+      finalizeArrayUpdate(memOps[i]);
     }
   });
   // Clear data structures to allow for pass reuse
