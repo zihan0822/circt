@@ -82,6 +82,7 @@ private:
   // This holds a similar function as the opLIDMap but keeps
   // track of block argument index -> LID mappings
   DenseMap<size_t, size_t> inputLIDs;
+  DenseMap<Operation *, size_t> memCurrentViewLIDs;
   // Stores all of the register declaration ops.
   // This allows for the emission of transition arcs for the regs
   // to be deferred to the end of the pass.
@@ -178,6 +179,18 @@ private:
 
   std::pair<size_t, size_t> encodeArraySort(size_t depth, size_t width) {
     return std::make_pair(llvm::Log2_64_Ceil(depth), width);
+  }
+
+  void updateMemView(seq::FirMemOp op, size_t LID) {
+    memCurrentViewLIDs[op] = LID;
+  }
+
+  void updateMemView(Value op, size_t LID) {
+    memCurrentViewLIDs[op.getDefiningOp()] = LID;
+  }
+
+  size_t getArrayStateLID(Value op) {
+    return memCurrentViewLIDs[op.getDefiningOp()];
   }
 
   // Updates or creates an entry for the given operation
@@ -459,6 +472,15 @@ private:
   }
 
   void genIte(size_t opLID, size_t condLID, size_t tLID, size_t fLID,
+              std::pair<size_t, size_t> arrayType) {
+    size_t sid = getSortLID(arrayType);
+    // Build and return the ite instruction
+    os << opLID << " "
+       << "ite"
+       << " " << sid << " " << condLID << " " << tLID << " " << fLID << "\n";
+  }
+
+  void genIte(size_t opLID, size_t condLID, size_t tLID, size_t fLID,
               int64_t width) {
     size_t sid = getSortLID(width);
     // Build and return the ite instruction
@@ -712,7 +734,8 @@ public:
     auto type = dyn_cast<seq::FirMemType>(mem.getType());
     genArraySort(encodeArraySort(type));
     size_t sid = getSortLID(type);
-    size_t opLID = getOpLID((Operation *)mem);
+    size_t opLID = lid++;
+    updateMemView(mem, opLID);
     genArrayState(opLID, sid);
   }
 
@@ -769,18 +792,22 @@ public:
 
   size_t genArrayRead(size_t opLID, Value array, Value index,
                       int64_t dataWidth) {
+    return genArrayRead(opLID, getOpLID(array), getOpLID(index), dataWidth);
+  }
+
+  size_t genArrayRead(size_t opLID, size_t arrayLID, size_t indexLID,
+                      int64_t dataWidth) {
     size_t sid = getSortLID(dataWidth);
     os << opLID << " "
        << "read"
-       << " " << sid << " " << getOpLID(array) << " " << getOpLID(index)
-       << "\n";
+       << " " << sid << " " << arrayLID << " " << indexLID << "\n";
     return opLID;
   }
 
-  size_t genArrayWrite(size_t opLID, Value array, Value index, Value data,
+  size_t genArrayWrite(size_t opLID, size_t arrayLID, Value index, Value data,
                        std::pair<size_t, size_t> encoding) {
-    return genArrayWrite(opLID, getOpLID(array), getOpLID(index),
-                         getOpLID(data), encoding);
+    return genArrayWrite(opLID, arrayLID, getOpLID(index), getOpLID(data),
+                         encoding);
   }
 
   size_t genArrayWrite(size_t opLID, size_t arrayLID, size_t indexLID,
@@ -812,15 +839,18 @@ public:
     Value mem = op.getMemory();
     auto arrayType = dyn_cast<seq::FirMemType>(mem.getType());
     auto [_, dataWidth] = encodeArraySort(arrayType);
+    size_t memLID = getArrayStateLID(mem);
     size_t opLID = getOpLID((Operation *)op);
-    genArrayRead(opLID, mem, op.getAddress(), dataWidth);
+    genArrayRead(opLID, memLID, getOpLID(op.getAddress()), dataWidth);
   }
 
   void visit(seq::FirMemWriteOp op) {
     auto mem = op.getMemory();
     auto memType = encodeArraySort(dyn_cast<seq::FirMemType>(mem.getType()));
+    size_t memLID = getArrayStateLID(mem);
     size_t opLID = getOpLID((Operation *)op);
-    genArrayWrite(opLID, mem, op.getAddress(), op.getData(), memType);
+    genArrayWrite(opLID, memLID, op.getAddress(), op.getData(), memType);
+    updateMemView(mem, opLID);
   }
 
   void visit(seq::FirMemReadWriteOp op) {
@@ -828,10 +858,17 @@ public:
           data = op.getWriteData();
     auto memType = encodeArraySort(dyn_cast<seq::FirMemType>(mem.getType()));
     auto [_, dataWidth] = memType;
-    genArrayWrite(lid++, mem, address, data, memType);
-    size_t readLID = genArrayRead(lid++, mem, address, dataWidth);
+    size_t lastViewLID = getArrayStateLID(mem);
+    size_t writtenMemLID =
+        genArrayWrite(lid++, lastViewLID, address, data, memType);
+    size_t readLID =
+        genArrayRead(lid++, lastViewLID, getOpLID(address), dataWidth);
+
     size_t modeLID = getOpLID(op.getMode());
     genIte(op, modeLID, getOpLID(data), readLID, dataWidth);
+    size_t updatedMemLID = lid++;
+    genIte(updatedMemLID, modeLID, writtenMemLID, lastViewLID, memType);
+    updateMemView(mem, updatedMemLID);
   }
 
   // Binary operations are all emitted the same way, so we can group them into
