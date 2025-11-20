@@ -1167,7 +1167,7 @@ public:
               sv::MacroDeclOp, sv::VerbatimOp, sv::VerbatimExprOp,
               sv::VerbatimExprSEOp, sv::IfOp, sv::IfDefOp,
               sv::IfDefProceduralOp, sv::AlwaysOp, sv::AlwaysCombOp,
-              sv::AlwaysFFOp, seq::FromClockOp, hw::HWModuleOp>(
+              sv::FWriteOp, sv::AlwaysFFOp, seq::FromClockOp, hw::HWModuleOp>(
             [&](auto expr) { ignore(op); })
 
         // Make sure that the design only contains one clock
