@@ -189,6 +189,13 @@ private:
     memCurrentViewLIDs[op.getDefiningOp()] = LID;
   }
 
+  size_t getArrayStateLID(Value op) {
+    return memCurrentViewLIDs[op.getDefiningOp()];
+  }
+
+  size_t getArrayStateLID(Operation *op) { return memCurrentViewLIDs[op]; }
+
+
   // Updates or creates an entry for the given operation
   // associating it with the current lid
   void setOpAlias(Operation *alias, Operation *op) {
@@ -874,7 +881,7 @@ public:
     auto seqMemType = dyn_cast<seq::FirMemType>(mem.getType());
     auto encoding = encodeArraySort(seqMemType);
     auto [_, dataWidth] = encoding;
-    size_t memLID = getOpLID(mem);
+    size_t memLID = getArrayStateLID(mem);
     size_t addressLID = getOpLID(address);
     size_t dataSID = getOpLID(data);
     if (maskWidth.has_value()) {
