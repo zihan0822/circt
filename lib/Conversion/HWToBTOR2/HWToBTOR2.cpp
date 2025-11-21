@@ -360,6 +360,14 @@ private:
        << " " << sid << " " << regLID << " " << initValLID << "\n";
   }
 
+  void genBinOp(StringRef inst, size_t opLID, size_t op1LID, size_t op2LID,
+                size_t width) {
+    size_t sid = getSortLID(width);
+    // Build and return the string
+    os << opLID << " " << inst << " " << sid << " " << op1LID << " " << op2LID
+       << "\n";
+  }
+
   // Generates a binary operation instruction given an op name, two operands and
   // a result width.
   void genBinOp(StringRef inst, Operation *binop, Value op1, Value op2,
@@ -367,17 +375,11 @@ private:
     // Set the LID for this operation
     size_t opLID = getOpLID(binop);
 
-    // Find the sort's lid
-    size_t sid = getSortLID(width);
-
     // Assuming that the operands were already emitted
     // Find the LIDs associated to the operands
     size_t op1LID = getOpLID(op1);
     size_t op2LID = getOpLID(op2);
-
-    // Build and return the string
-    os << opLID << " " << inst << " " << sid << " " << op1LID << " " << op2LID
-       << "\n";
+    genBinOp(inst, opLID, op1LID, op2LID, width);
   }
 
   // Generates a slice instruction given an operand, the lowbit, and the width
@@ -418,6 +420,11 @@ private:
   // Generates a constant declaration given a value, a width and a name
   void genUnaryOp(Operation *srcop, Value op0, StringRef inst, size_t width) {
     genUnaryOp(srcop, op0.getDefiningOp(), inst, width);
+  }
+
+  void genUnaryOp(size_t opLID, size_t op0LID, StringRef inst, size_t width) {
+    size_t sid = getSortLID(width);
+    os << opLID << " " << inst << " " << sid << " " << op0LID << "\n";
   }
 
   // Generate a btor2 assertion given an assertion operation
@@ -868,30 +875,59 @@ public:
     genArrayRead(opLID, memLID, getOpLID(op.getAddress()), dataWidth);
   }
 
+  size_t genMaskGuardedMemWrite(Value mem, Value address, Value data,
+                                Value mask, std::optional<uint32_t> maskWidth) {
+    auto seqMemType = dyn_cast<seq::FirMemType>(mem.getType());
+    auto encoding = encodeArraySort(seqMemType);
+    auto [_, dataWidth] = encoding;
+    size_t memLID = getArrayStateLID(mem);
+    size_t addressLID = getOpLID(address);
+    size_t dataSID = getOpLID(data);
+    if (maskWidth.has_value()) {
+      size_t maskSID = getOpLID(mask);
+      size_t maskWidth = mask.getType().getIntOrFloatBitWidth();
+      maskSID =
+          genReplicateAsConcats(maskSID, dataWidth / maskWidth, maskWidth);
+      size_t oldValueSID = genArrayRead(lid++, memLID, addressLID, dataWidth);
+      size_t invertedMaskSID = lid++;
+      genUnaryOp(invertedMaskSID, maskSID, "not", dataWidth);
+      size_t maskedOLDSID = lid++;
+      genBinOp("and", maskedOLDSID, invertedMaskSID, oldValueSID, dataWidth);
+      size_t maskedDataSID = lid++;
+      genBinOp("and", maskedDataSID, maskSID, dataSID, dataWidth);
+      size_t mergedDataSID = lid++;
+      genBinOp("or", mergedDataSID, maskedOLDSID, maskedDataSID, dataWidth);
+      dataSID = mergedDataSID;
+    }
+    size_t opLID = lid++;
+    genArrayWrite(opLID, memLID, addressLID, dataSID, encoding);
+    return opLID;
+  }
+
   void visit(seq::FirMemWriteOp op) {
     auto mem = op.getMemory();
-    auto memType = encodeArraySort(dyn_cast<seq::FirMemType>(mem.getType()));
-    size_t memLID = getArrayStateLID(mem);
-    size_t opLID = getOpLID((Operation *)op);
-    genArrayWrite(opLID, memLID, op.getAddress(), op.getData(), memType);
+    size_t opLID = genMaskGuardedMemWrite(
+        mem, op.getAddress(), op.getData(), op.getMask(),
+        dyn_cast<seq::FirMemType>(mem.getType()).getMaskWidth());
     updateMemView(mem, opLID);
   }
 
   void visit(seq::FirMemReadWriteOp op) {
     Value mem = op.getMemory(), address = op.getAddress(),
-          data = op.getWriteData();
-    auto memType = encodeArraySort(dyn_cast<seq::FirMemType>(mem.getType()));
-    auto [_, dataWidth] = memType;
+          data = op.getWriteData(), mask = op.getMask();
+    auto memType = dyn_cast<seq::FirMemType>(mem.getType());
+    auto encoding = encodeArraySort(memType);
+    auto [_, dataWidth] = encoding;
     size_t lastViewLID = getArrayStateLID(mem);
-    size_t writtenMemLID =
-        genArrayWrite(lid++, lastViewLID, address, data, memType);
+    size_t writtenMemLID = genMaskGuardedMemWrite(mem, address, data, mask,
+                                                  memType.getMaskWidth());
     size_t readLID =
         genArrayRead(lid++, lastViewLID, getOpLID(address), dataWidth);
 
     size_t modeLID = getOpLID(op.getMode());
     genIte(op, modeLID, getOpLID(data), readLID, dataWidth);
     size_t updatedMemLID = lid++;
-    genIte(updatedMemLID, modeLID, writtenMemLID, lastViewLID, memType);
+    genIte(updatedMemLID, modeLID, writtenMemLID, lastViewLID, encoding);
     updateMemView(mem, updatedMemLID);
   }
 
