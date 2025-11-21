@@ -189,12 +189,6 @@ private:
     memCurrentViewLIDs[op.getDefiningOp()] = LID;
   }
 
-  size_t getArrayStateLID(Value op) {
-    return memCurrentViewLIDs[op.getDefiningOp()];
-  }
-
-  size_t getArrayStateLID(Operation *op) { return memCurrentViewLIDs[op]; }
-
   // Updates or creates an entry for the given operation
   // associating it with the current lid
   void setOpAlias(Operation *alias, Operation *op) {
@@ -688,7 +682,7 @@ private:
   void finalizeArrayUpdate(Operation *op) {
     auto type = dyn_cast<seq::FirMemOp>(op).getType();
     auto encoding = encodeArraySort(type);
-    genNext(op, getArrayStateLID(op), encoding);
+    genNext(op, memCurrentViewLIDs[op], encoding);
   }
 
 public:
@@ -870,7 +864,7 @@ public:
     Value mem = op.getMemory();
     auto arrayType = dyn_cast<seq::FirMemType>(mem.getType());
     auto [_, dataWidth] = encodeArraySort(arrayType);
-    size_t memLID = getArrayStateLID(mem);
+    size_t memLID = getOpLID(mem);
     size_t opLID = getOpLID((Operation *)op);
     genArrayRead(opLID, memLID, getOpLID(op.getAddress()), dataWidth);
   }
@@ -880,7 +874,7 @@ public:
     auto seqMemType = dyn_cast<seq::FirMemType>(mem.getType());
     auto encoding = encodeArraySort(seqMemType);
     auto [_, dataWidth] = encoding;
-    size_t memLID = getArrayStateLID(mem);
+    size_t memLID = getOpLID(mem);
     size_t addressLID = getOpLID(address);
     size_t dataSID = getOpLID(data);
     if (maskWidth.has_value()) {
@@ -918,7 +912,7 @@ public:
     auto memType = dyn_cast<seq::FirMemType>(mem.getType());
     auto encoding = encodeArraySort(memType);
     auto [_, dataWidth] = encoding;
-    size_t lastViewLID = getArrayStateLID(mem);
+    size_t lastViewLID = getOpLID(mem);
     size_t writtenMemLID = genMaskGuardedMemWrite(mem, address, data, mask,
                                                   memType.getMaskWidth());
     size_t readLID =
