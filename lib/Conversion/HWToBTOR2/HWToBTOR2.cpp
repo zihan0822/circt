@@ -1056,15 +1056,33 @@ public:
   }
 
   void visitComb(comb::ReplicateOp op) {
-    int64_t resultWidth = requireSort(op.getType());
-    int64_t srcWidth = requireSort(op.getInput().getType());
-    int64_t shiftAmount = resultWidth - srcWidth;
-    size_t opLID = getOpLID((Operation *)op);
-    size_t srcLID = getOpLID(op.getInput());
-    os << opLID << " "
-       << "sext"
-       << " " << getSortLID(resultWidth) << " " << srcLID << " " << shiftAmount
-       << "\n";
+    Value op0 = op.getOperand();
+    auto count = op.getMultiple();
+    auto inputWidth = op0.getType().getIntOrFloatBitWidth();
+
+    // Generate the concat chain
+    size_t opLID = genReplicateAsConcats(getOpLID(op0), count, inputWidth);
+    opLIDMap[(Operation *)op] = opLID;
+  }
+
+  size_t genReplicateAsConcats(size_t op0LID, size_t count,
+                               unsigned int inputWidth) {
+    auto currentWidth = inputWidth;
+
+    auto prevOperandLID = op0LID;
+    for (size_t i = 1; i < count; ++i) {
+      currentWidth += inputWidth;
+      // Ensure that the sort exists
+      genSort("bitvec", currentWidth);
+
+      auto thisLid = lid++;
+      os << thisLid << " "
+         << "concat"
+         << " " << getSortLID(currentWidth) << " " << prevOperandLID << " "
+         << op0LID << "\n";
+      prevOperandLID = thisLid;
+    }
+    return prevOperandLID;
   }
 
   void visitComb(Operation *op) { visitInvalidComb(op); }
