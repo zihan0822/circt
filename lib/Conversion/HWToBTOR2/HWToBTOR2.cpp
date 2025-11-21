@@ -195,7 +195,6 @@ private:
 
   size_t getArrayStateLID(Operation *op) { return memCurrentViewLIDs[op]; }
 
-
   // Updates or creates an entry for the given operation
   // associating it with the current lid
   void setOpAlias(Operation *alias, Operation *op) {
@@ -1246,8 +1245,8 @@ public:
               sv::MacroDeclOp, sv::VerbatimOp, sv::VerbatimExprOp,
               sv::VerbatimExprSEOp, sv::IfOp, sv::IfDefOp,
               sv::IfDefProceduralOp, sv::AlwaysOp, sv::AlwaysCombOp,
-              sv::FWriteOp, sv::AlwaysFFOp, seq::FromClockOp, hw::HWModuleOp>(
-            [&](auto expr) { ignore(op); })
+              sv::FWriteOp, sv::AlwaysFFOp, seq::FromClockOp, seq::ToClockOp,
+              seq::ConstClockOp, hw::HWModuleOp>([&](auto expr) { ignore(op); })
 
         // Make sure that the design only contains one clock
         .Case<seq::FromClockOp>([&](auto expr) {
