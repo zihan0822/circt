@@ -1335,13 +1335,13 @@ void ConvertHWToBTOR2Pass::runOnOperation() {
       }
     });
 
+    for (size_t i = 0; i < memOps.size(); ++i) {
+      finalizeArrayUpdate(memOps[i]);
+    }
+
     // Iterate through the registers and generate the `next` instructions
     for (size_t i = 0; i < regOps.size(); ++i) {
       finalizeRegVisit(regOps[i]);
-    }
-
-    for (size_t i = 0; i < memOps.size(); ++i) {
-      finalizeArrayUpdate(memOps[i]);
     }
   });
   // Clear data structures to allow for pass reuse
