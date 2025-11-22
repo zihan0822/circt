@@ -30,6 +30,7 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/raw_ostream.h"
+#include <sstream>
 
 using namespace circt;
 using namespace hw;
@@ -382,23 +383,23 @@ private:
     genBinOp(inst, opLID, op1LID, op2LID, width);
   }
 
-  // Generates a slice instruction given an operand, the lowbit, and the width
-  void genSlice(Operation *srcop, Value op0, size_t lowbit, int64_t width) {
-    // Assign a LID to this operation
-    size_t opLID = getOpLID(srcop);
-
-    // Find the sort's associated lid in order to use it in the instruction
+  void genSlice(size_t opLID, size_t op0LID, size_t lowbit, int64_t width) {
     size_t sid = getSortLID(width);
-
-    // Assuming that the operand has already been emitted
-    // Find the LID associated to the operand
-    size_t op0LID = getOpLID(op0);
-
     // Build and return the slice instruction
     os << opLID << " "
        << "slice"
        << " " << sid << " " << op0LID << " " << (lowbit + width - 1) << " "
        << lowbit << "\n";
+  }
+
+  // Generates a slice instruction given an operand, the lowbit, and the width
+  void genSlice(Operation *srcop, Value op0, size_t lowbit, int64_t width) {
+    // Assign a LID to this operation
+    size_t opLID = getOpLID(srcop);
+    // Assuming that the operand has already been emitted
+    // Find the LID associated to the operand
+    size_t op0LID = getOpLID(op0);
+    genSlice(opLID, op0LID, lowbit, width);
   }
 
   // Generates a constant declaration given a value, a width and a name
@@ -875,6 +876,46 @@ public:
     genArrayRead(opLID, memLID, getOpLID(op.getAddress()), dataWidth);
   }
 
+  size_t genConcat(size_t leftLID, size_t rightLID, size_t resultWidth) {
+    size_t opLID = lid++;
+    size_t sid = getSortLID(resultWidth);
+    os << opLID << " "
+       << "concat"
+       << " " << sid << " " << leftLID << " " << rightLID << "\n";
+    return opLID;
+  }
+
+  size_t extractBit(size_t opLID, size_t bitIndex) {
+    size_t bitLID = lid++;
+    genSlice(bitLID, opLID, bitIndex, 1);
+    return bitLID;
+  }
+
+  // Expands a single bit write mask into a full fledge byte mask of `dataWidth`
+  // For example, mask = 0x10 will be expanded into 0xff_00
+  size_t expandSingleBitMask(size_t maskOpLID, size_t dataWidth,
+                             size_t maskWidth) {
+    assert(maskWidth == 8);
+    size_t onesLID = lid++;
+    genConst(0xff, 8, onesLID);
+    size_t zerosLID = genZero(8);
+    size_t accumLID = noLID;
+    size_t currentWidth = 0;
+    for (int i = dataWidth / 8 - 1; i >= 0; i--) {
+      currentWidth += 8;
+      size_t bitLID = extractBit(maskOpLID, i);
+      size_t currentByteLID = lid++;
+      genIte(currentByteLID, bitLID, onesLID, zerosLID, 8);
+      if (accumLID == noLID) {
+        accumLID = currentByteLID;
+      } else {
+        accumLID = genConcat(accumLID, currentByteLID, currentWidth);
+      }
+    }
+    assert(currentWidth == dataWidth);
+    return accumLID;
+  }
+
   size_t genMaskGuardedMemWrite(Value mem, Value address, Value data,
                                 Value mask, std::optional<uint32_t> maskWidth) {
     auto seqMemType = dyn_cast<seq::FirMemType>(mem.getType());
@@ -882,25 +923,24 @@ public:
     auto [_, dataWidth] = encoding;
     size_t memLID = getArrayStateLID(mem);
     size_t addressLID = getOpLID(address);
-    size_t dataSID = getOpLID(data);
+    size_t dataLID = getOpLID(data);
     if (maskWidth.has_value()) {
-      size_t maskSID = getOpLID(mask);
+      size_t maskLID = getOpLID(mask);
       size_t maskWidth = mask.getType().getIntOrFloatBitWidth();
-      maskSID =
-          genReplicateAsConcats(maskSID, dataWidth / maskWidth, maskWidth);
-      size_t oldValueSID = genArrayRead(lid++, memLID, addressLID, dataWidth);
-      size_t invertedMaskSID = lid++;
-      genUnaryOp(invertedMaskSID, maskSID, "not", dataWidth);
-      size_t maskedOLDSID = lid++;
-      genBinOp("and", maskedOLDSID, invertedMaskSID, oldValueSID, dataWidth);
+      maskLID = expandSingleBitMask(maskLID, dataWidth, maskWidth);
+      size_t oldValueLID = genArrayRead(lid++, memLID, addressLID, dataWidth);
+      size_t invertedMaskLID = lid++;
+      genUnaryOp(invertedMaskLID, maskLID, "not", dataWidth);
+      size_t maskedOldLID = lid++;
+      genBinOp("and", maskedOldLID, invertedMaskLID, oldValueLID, dataWidth);
       size_t maskedDataSID = lid++;
-      genBinOp("and", maskedDataSID, maskSID, dataSID, dataWidth);
+      genBinOp("and", maskedDataSID, maskLID, dataLID, dataWidth);
       size_t mergedDataSID = lid++;
-      genBinOp("or", mergedDataSID, maskedOLDSID, maskedDataSID, dataWidth);
-      dataSID = mergedDataSID;
+      genBinOp("or", mergedDataSID, maskedOldLID, maskedDataSID, dataWidth);
+      dataLID = mergedDataSID;
     }
     size_t opLID = lid++;
-    genArrayWrite(opLID, memLID, addressLID, dataSID, encoding);
+    genArrayWrite(opLID, memLID, addressLID, dataLID, encoding);
     return opLID;
   }
 
