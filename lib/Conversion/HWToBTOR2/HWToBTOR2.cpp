@@ -893,8 +893,7 @@ public:
 
   // Expands a single bit write mask into a full fledge byte mask of `dataWidth`
   // For example, mask = 0x10 will be expanded into 0xff_00
-  size_t expandSingleBitMask(size_t maskOpLID, size_t dataWidth,
-                             size_t maskWidth) {
+  size_t expandMaskBits(size_t maskOpLID, size_t dataWidth, size_t maskWidth) {
     assert(maskWidth == 8);
     size_t onesLID = lid++;
     genConst(0xff, 8, onesLID);
@@ -905,6 +904,7 @@ public:
       currentWidth += 8;
       size_t bitLID = extractBit(maskOpLID, i);
       size_t currentByteLID = lid++;
+      genSort("bitvec", currentWidth);
       genIte(currentByteLID, bitLID, onesLID, zerosLID, 8);
       if (accumLID == noLID) {
         accumLID = currentByteLID;
@@ -916,8 +916,8 @@ public:
     return accumLID;
   }
 
-  size_t genMaskGuardedMemWrite(Value mem, Value address, Value data,
-                                Value mask, std::optional<uint32_t> maskWidth) {
+  size_t genSyncMemWrite(Value mem, Value address, Value data, Value enable,
+                         Value mask, std::optional<uint32_t> maskWidth) {
     auto seqMemType = dyn_cast<seq::FirMemType>(mem.getType());
     auto encoding = encodeArraySort(seqMemType);
     auto [_, dataWidth] = encoding;
@@ -927,40 +927,45 @@ public:
     if (maskWidth.has_value()) {
       size_t maskLID = getOpLID(mask);
       size_t maskWidth = mask.getType().getIntOrFloatBitWidth();
-      maskLID = expandSingleBitMask(maskLID, dataWidth, maskWidth);
+      maskLID = expandMaskBits(maskLID, dataWidth, maskWidth);
       size_t oldValueLID = genArrayRead(lid++, memLID, addressLID, dataWidth);
       size_t invertedMaskLID = lid++;
       genUnaryOp(invertedMaskLID, maskLID, "not", dataWidth);
       size_t maskedOldLID = lid++;
       genBinOp("and", maskedOldLID, invertedMaskLID, oldValueLID, dataWidth);
-      size_t maskedDataSID = lid++;
-      genBinOp("and", maskedDataSID, maskLID, dataLID, dataWidth);
-      size_t mergedDataSID = lid++;
-      genBinOp("or", mergedDataSID, maskedOldLID, maskedDataSID, dataWidth);
-      dataLID = mergedDataSID;
+      size_t maskedDataLID = lid++;
+      genBinOp("and", maskedDataLID, maskLID, dataLID, dataWidth);
+      size_t mergedDataLID = lid++;
+      genBinOp("or", mergedDataLID, maskedOldLID, maskedDataLID, dataWidth);
+      dataLID = mergedDataLID;
     }
-    size_t opLID = lid++;
-    genArrayWrite(opLID, memLID, addressLID, dataLID, encoding);
+    size_t opLID = genArrayWrite(lid++, memLID, addressLID, dataLID, encoding);
+    if (enable) {
+      size_t guardedLID = lid++;
+      genIte(guardedLID, getOpLID(enable), opLID, memLID, encoding);
+      opLID = guardedLID;
+    }
     return opLID;
   }
 
   void visit(seq::FirMemWriteOp op) {
     auto mem = op.getMemory();
-    size_t opLID = genMaskGuardedMemWrite(
-        mem, op.getAddress(), op.getData(), op.getMask(),
+    size_t opLID = genSyncMemWrite(
+        mem, op.getAddress(), op.getData(), op.getEnable(), op.getMask(),
         dyn_cast<seq::FirMemType>(mem.getType()).getMaskWidth());
     updateMemView(mem, opLID);
   }
 
   void visit(seq::FirMemReadWriteOp op) {
     Value mem = op.getMemory(), address = op.getAddress(),
-          data = op.getWriteData(), mask = op.getMask();
+          data = op.getWriteData(), mask = op.getMask(),
+          enable = op.getEnable();
     auto memType = dyn_cast<seq::FirMemType>(mem.getType());
     auto encoding = encodeArraySort(memType);
     auto [_, dataWidth] = encoding;
     size_t lastViewLID = getOpLID(mem);
-    size_t writtenMemLID = genMaskGuardedMemWrite(mem, address, data, mask,
-                                                  memType.getMaskWidth());
+    size_t writtenMemLID = genSyncMemWrite(mem, address, data, enable, mask,
+                                           memType.getMaskWidth());
     size_t readLID =
         genArrayRead(lid++, lastViewLID, getOpLID(address), dataWidth);
 
