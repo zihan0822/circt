@@ -83,7 +83,7 @@ private:
   // This holds a similar function as the opLIDMap but keeps
   // track of block argument index -> LID mappings
   DenseMap<size_t, size_t> inputLIDs;
-  DenseMap<Operation *, size_t> memCurrentViewLIDs;
+  DenseMap<Operation *, SmallVector<Operation *>> memWritePorts;
   // Stores all of the register declaration ops.
   // This allows for the emission of transition arcs for the regs
   // to be deferred to the end of the pass.
@@ -91,7 +91,6 @@ private:
   // have been converted to btor2 before we can emit the transition.
   SmallVector<Operation *> regOps;
   SmallVector<hw::PortInfo> outputPorts;
-  SmallVector<Operation *> memOps;
 
   // Used to perform a DFS search through the module to declare all operands
   // before they are used
@@ -182,19 +181,9 @@ private:
     return std::make_pair(llvm::Log2_64_Ceil(depth), width);
   }
 
-  void updateMemView(seq::FirMemOp op, size_t LID) {
-    memCurrentViewLIDs[op] = LID;
+  void registerMemWritePorts(Value memory, Operation *op) {
+    memWritePorts[memory.getDefiningOp()].push_back(op);
   }
-
-  void updateMemView(Value op, size_t LID) {
-    memCurrentViewLIDs[op.getDefiningOp()] = LID;
-  }
-
-  size_t getArrayStateLID(Value op) {
-    return memCurrentViewLIDs[op.getDefiningOp()];
-  }
-
-  size_t getArrayStateLID(Operation *op) { return memCurrentViewLIDs[op]; }
 
   // Updates or creates an entry for the given operation
   // associating it with the current lid
@@ -686,10 +675,16 @@ private:
     genNext(op, nextLID, width);
   }
 
-  void finalizeArrayUpdate(Operation *op) {
-    auto type = dyn_cast<seq::FirMemOp>(op).getType();
-    auto encoding = encodeArraySort(type);
-    genNext(op, memCurrentViewLIDs[op], encoding);
+  void finalizeArrayUpdate() {
+    for (auto &[mem, ops] : memWritePorts) {
+      seq::FirMemType memType =
+          dyn_cast<seq::FirMemType>(mem->getResult(0).getType());
+      size_t memLID = getOpLID(mem);
+      for (auto &writeOp : ops) {
+        memLID = genFirMemWrite(memLID, memType, writeOp);
+      }
+      genNext(mem, memLID, encodeArraySort(memType));
+    }
   }
 
 public:
@@ -762,12 +757,10 @@ public:
   }
 
   void visit(seq::FirMemOp mem) {
-    memOps.push_back(mem);
     auto type = dyn_cast<seq::FirMemType>(mem.getType());
     genArraySort(encodeArraySort(type));
     size_t sid = getSortLID(type);
     size_t opLID = getOpLID((Operation *)mem);
-    updateMemView(mem, opLID);
     genArrayState(opLID, sid);
   }
 
@@ -871,9 +864,10 @@ public:
     Value mem = op.getMemory();
     auto arrayType = dyn_cast<seq::FirMemType>(mem.getType());
     auto [_, dataWidth] = encodeArraySort(arrayType);
-    size_t memLID = getOpLID(mem);
+    size_t arrayStateLastCycle = getOpLID(mem);
     size_t opLID = getOpLID((Operation *)op);
-    genArrayRead(opLID, memLID, getOpLID(op.getAddress()), dataWidth);
+    genArrayRead(opLID, arrayStateLastCycle, getOpLID(op.getAddress()),
+                 dataWidth);
   }
 
   size_t genConcat(size_t leftLID, size_t rightLID, size_t resultWidth) {
@@ -894,13 +888,13 @@ public:
   // Expands a single bit write mask into a full fledge byte mask of `dataWidth`
   // For example, mask = 0x10 will be expanded into 0xff_00
   size_t expandMaskBits(size_t maskOpLID, size_t dataWidth, size_t maskWidth) {
-    assert(maskWidth == 8);
     size_t onesLID = lid++;
     genConst(0xff, 8, onesLID);
     size_t zerosLID = genZero(8);
     size_t accumLID = noLID;
     size_t currentWidth = 0;
-    for (int i = dataWidth / 8 - 1; i >= 0; i--) {
+    assert(maskWidth * 8 == dataWidth);
+    for (int i = maskWidth - 1; i >= 0; i--) {
       currentWidth += 8;
       size_t bitLID = extractBit(maskOpLID, i);
       size_t currentByteLID = lid++;
@@ -912,16 +906,13 @@ public:
         accumLID = genConcat(accumLID, currentByteLID, currentWidth);
       }
     }
-    assert(currentWidth == dataWidth);
     return accumLID;
   }
 
-  size_t genSyncMemWrite(Value mem, Value address, Value data, Value enable,
-                         Value mask, std::optional<uint32_t> maskWidth) {
-    auto seqMemType = dyn_cast<seq::FirMemType>(mem.getType());
-    auto encoding = encodeArraySort(seqMemType);
+  size_t genSyncMemWrite(size_t memLID, Value address, Value data, Value enable,
+                         Value mask, std::optional<uint32_t> maskWidth,
+                         std::pair<size_t, size_t> encoding) {
     auto [_, dataWidth] = encoding;
-    size_t memLID = getArrayStateLID(mem);
     size_t addressLID = getOpLID(address);
     size_t dataLID = getOpLID(data);
     if (maskWidth.has_value()) {
@@ -949,31 +940,39 @@ public:
   }
 
   void visit(seq::FirMemWriteOp op) {
-    auto mem = op.getMemory();
-    size_t opLID = genSyncMemWrite(
-        mem, op.getAddress(), op.getData(), op.getEnable(), op.getMask(),
-        dyn_cast<seq::FirMemType>(mem.getType()).getMaskWidth());
-    updateMemView(mem, opLID);
+    registerMemWritePorts(op.getMemory(), op);
+  }
+
+  size_t genFirMemWrite(size_t memLID, seq::FirMemType memType, Operation *op) {
+    auto encoding = encodeArraySort(memType);
+    return llvm::TypeSwitch<Operation *, size_t>(op)
+        .Case<seq::FirMemWriteOp>([&](auto writeOp) {
+          return genSyncMemWrite(memLID, writeOp.getAddress(),
+                                 writeOp.getData(), writeOp.getEnable(),
+                                 writeOp.getMask(), memType.getMaskWidth(),
+                                 encoding);
+        })
+        .Case<seq::FirMemReadWriteOp>([&](auto readWriteOp) {
+          size_t writtenLID = genSyncMemWrite(
+              memLID, readWriteOp.getAddress(), readWriteOp.getWriteData(),
+              readWriteOp.getEnable(), readWriteOp.getMask(),
+              memType.getMaskWidth(), encoding);
+          size_t modeLID = getOpLID(readWriteOp.getMode());
+          size_t opLID = lid++;
+          genIte(opLID, modeLID, writtenLID, memLID, encoding);
+          return opLID;
+        });
   }
 
   void visit(seq::FirMemReadWriteOp op) {
-    Value mem = op.getMemory(), address = op.getAddress(),
-          data = op.getWriteData(), mask = op.getMask(),
-          enable = op.getEnable();
+    registerMemWritePorts(op.getMemory(), op);
+    // potential write is postponed util finalize stage
+    Value mem = op.getMemory(), address = op.getAddress();
     auto memType = dyn_cast<seq::FirMemType>(mem.getType());
     auto encoding = encodeArraySort(memType);
     auto [_, dataWidth] = encoding;
-    size_t lastViewLID = getOpLID(mem);
-    size_t writtenMemLID = genSyncMemWrite(mem, address, data, enable, mask,
-                                           memType.getMaskWidth());
-    size_t readLID =
-        genArrayRead(lid++, lastViewLID, getOpLID(address), dataWidth);
-
-    size_t modeLID = getOpLID(op.getMode());
-    genIte(op, modeLID, getOpLID(data), readLID, dataWidth);
-    size_t updatedMemLID = lid++;
-    genIte(updatedMemLID, modeLID, writtenMemLID, lastViewLID, encoding);
-    updateMemView(mem, updatedMemLID);
+    size_t opLID = getOpLID((Operation *)op);
+    genArrayRead(opLID, getOpLID(mem), getOpLID(address), dataWidth);
   }
 
   // Binary operations are all emitted the same way, so we can group them into
@@ -1380,9 +1379,7 @@ void ConvertHWToBTOR2Pass::runOnOperation() {
       }
     });
 
-    for (size_t i = 0; i < memOps.size(); ++i) {
-      finalizeArrayUpdate(memOps[i]);
-    }
+    finalizeArrayUpdate();
 
     // Iterate through the registers and generate the `next` instructions
     for (size_t i = 0; i < regOps.size(); ++i) {
