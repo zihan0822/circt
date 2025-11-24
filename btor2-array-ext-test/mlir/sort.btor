@@ -1,0 +1,31 @@
+1 sort bitvec 2
+2 sort bitvec 19
+3 sort array 1 2
+4 state 3 
+5 sort bitvec 16
+6 constd 5 0
+7 constd 1 0
+8 constd 2 42
+9 sort bitvec 1
+10 constd 9 -1
+11 constd 9 -1
+12 read 2 4 7
+13 read 2 4 7
+14 output 6 d
+15 write 3 4 7 8
+16 ite 3 11 15 4
+17 next 3 4 16
+module {
+  hw.module @test_array_create_const(in %clock : !seq.clock, out d : i16) {
+    %c0_i16 = hw.constant 0 : i16
+    %c0_i2 = hw.constant 0 : i2
+    %c42_i19 = hw.constant 42 : i19
+    %true = hw.constant true
+    %true_0 = hw.constant true
+    %c = seq.firmem 0, 1, undefined, undefined : <3 x 19>
+    %0 = seq.firmem.read_write_port %c[%c0_i2] = %c42_i19 if %true_0, clock %clock : <3 x 19>
+    %1 = seq.firmem.read_port %c[%c0_i2], clock %clock : <3 x 19>
+    hw.output %c0_i16 : i16
+  }
+}
+

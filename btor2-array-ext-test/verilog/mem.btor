@@ -1,0 +1,28 @@
+1 sort bitvec 3
+2 input 1 addr
+3 sort bitvec 1
+4 input 3 clk
+5 sort bitvec 8
+6 input 5 data_in
+7 input 3 en
+8 sort array 1 5
+9 state 8 
+10 read 5 9 2
+11 ite 5 7 6 10
+12 output 10 data_out
+13 write 8 9 2 11
+14 next 8 9 13
+module {
+  hw.module @mem_enable(in %addr : i3, in %clk : i1, in %data_in : i8, out data_out : i8, in %en : i1) {
+    %0 = seq.const_clock  low
+    %mem = seq.firmem 0, 1, undefined, port_order {prefix = ""} : <8 x 8>
+    %1 = seq.firmem.read_port %mem[%addr], clock %0 {sv.namehint = "_memrd__mem_verilog_mem_sv_11_2_DATA"} : <8 x 8>
+    seq.firmem.write_port %mem[%addr] = %2, clock %3 : <8 x 8>
+    %2 = comb.mux bin %en, %data_in, %1 {sv.namehint = "_ternary_verilog_mem_sv_11_3"} : i8
+    %3 = seq.to_clock %clk
+    hw.output %1 : i8
+  }
+  om.class @mem_enable_Class(%basepath: !om.basepath) {
+  }
+}
+

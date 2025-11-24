@@ -1,0 +1,83 @@
+1 sort bitvec 1
+2 input 1 reset
+3 input 1 io_enq_valid
+4 sort bitvec 4
+5 input 4 io_enq_bits_tl_state_size
+6 sort bitvec 5
+7 input 6 io_enq_bits_tl_state_source
+8 input 1 io_deq_ready
+9 sort bitvec 3
+10 sort bitvec 9
+11 sort array 9 10
+12 state 11 
+13 state 9 enq_ptr_value
+14 state 9 deq_ptr_value
+15 state 1 maybe_full
+16 constd 9 1
+17 constd 1 0
+18 constd 9 0
+19 constd 1 -1
+20 eq 1 13 14
+21 and 1 20 15
+22 xor 1 21 19
+23 and 1 22 3
+24 concat 10 7 5
+25 read 10 12 14
+26 slice 4 25 3 0
+27 slice 6 25 8 4
+28 xor 1 15 19
+29 and 1 20 28
+30 xor 1 29 19
+31 and 1 8 30
+32 add 9 13 16
+33 ite 9 23 32 13
+34 add 9 14 16
+35 ite 9 31 34 14
+36 eq 1 23 31
+37 ite 1 36 15 23
+38 output 22 io_enq_ready
+39 output 30 io_deq_valid
+40 output 26 io_deq_bits_tl_state_size
+41 output 27 io_deq_bits_tl_state_source
+42 write 11 12 13 24
+43 ite 11 23 42 12
+44 next 11 12 43
+45 ite 9 2 18 33
+46 next 9 13 45
+47 ite 9 2 18 35
+48 next 9 14 47
+49 ite 1 2 17 37
+50 next 1 15 49
+module {
+  hw.module private @Queue8_BundleMap(in %clock : !seq.clock, in %reset : i1, out io_enq_ready : i1, in %io_enq_valid : i1, in %io_enq_bits_tl_state_size : i4, in %io_enq_bits_tl_state_source : i5, in %io_deq_ready : i1, out io_deq_valid : i1, out io_deq_bits_tl_state_size : i4, out io_deq_bits_tl_state_source : i5) {
+    %c1_i3 = hw.constant 1 : i3
+    %false = hw.constant false
+    %c0_i3 = hw.constant 0 : i3
+    %true = hw.constant true
+    %ram = seq.firmem 0, 1, undefined, port_order {prefix = ""} : <8 x 9>
+    seq.firmem.write_port %ram[%enq_ptr_value] = %1, clock %clock enable %8 : <8 x 9>
+    %0 = seq.firmem.read_port %ram[%deq_ptr_value], clock %clock : <8 x 9>
+    %1 = comb.concat %io_enq_bits_tl_state_source, %io_enq_bits_tl_state_size : i5, i4
+    %2 = comb.extract %0 from 0 {sv.namehint = "ram_io_deq_bits_MPORT_data_tl_state_size"} : (i9) -> i4
+    %3 = comb.extract %0 from 4 {sv.namehint = "ram_io_deq_bits_MPORT_data_tl_state_source"} : (i9) -> i5
+    %enq_ptr_value = seq.firreg %11 clock %clock reset sync %reset, %c0_i3 {firrtl.random_init_start = 0 : ui64, sv.namehint = "enq_ptr_value"} : i3
+    %deq_ptr_value = seq.firreg %13 clock %clock reset sync %reset, %c0_i3 {firrtl.random_init_start = 3 : ui64, sv.namehint = "deq_ptr_value"} : i3
+    %maybe_full = seq.firreg %15 clock %clock reset sync %reset, %false {firrtl.random_init_start = 6 : ui64} : i1
+    %4 = comb.icmp bin eq %enq_ptr_value, %deq_ptr_value {sv.namehint = "ptr_match"} : i3
+    %5 = comb.xor bin %maybe_full, %true {sv.namehint = "_empty_T"} : i1
+    %6 = comb.and bin %4, %5 {sv.namehint = "empty"} : i1
+    %7 = comb.and bin %4, %maybe_full {sv.namehint = "full"} : i1
+    %8 = comb.and bin %17, %io_enq_valid {sv.namehint = "do_enq"} : i1
+    %9 = comb.and bin %io_deq_ready, %16 {sv.namehint = "do_deq"} : i1
+    %10 = comb.add %enq_ptr_value, %c1_i3 {sv.namehint = "_value_T"} : i3
+    %11 = comb.mux bin %8, %10, %enq_ptr_value : i3
+    %12 = comb.add %deq_ptr_value, %c1_i3 {sv.namehint = "_value_T_2"} : i3
+    %13 = comb.mux bin %9, %12, %deq_ptr_value : i3
+    %14 = comb.icmp bin eq %8, %9 : i1
+    %15 = comb.mux bin %14, %maybe_full, %8 : i1
+    %16 = comb.xor bin %6, %true {sv.namehint = "io_deq_valid"} : i1
+    %17 = comb.xor bin %7, %true {sv.namehint = "io_enq_ready"} : i1
+    hw.output %17, %16, %2, %3 : i1, i1, i4, i5
+  }
+}
+

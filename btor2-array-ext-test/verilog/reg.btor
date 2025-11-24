@@ -1,0 +1,20 @@
+1 sort bitvec 1
+2 input 1 clk
+3 sort bitvec 8
+4 input 3 in
+5 state 3 _procdff_2
+6 state 3 _procdff_3
+7 output 5 out
+8 next 3 5 6
+9 next 3 6 4
+module {
+  hw.module @array(in %clk : i1, in %in : i8, out out : i8) {
+    %0 = seq.to_clock %clk
+    %_procdff_2 = seq.firreg %_procdff_3 clock %0 {firrtl.random_init_start = 0 : ui64} : i8
+    %_procdff_3 = seq.firreg %in clock %0 {firrtl.random_init_start = 8 : ui64, sv.namehint = "data"} : i8
+    hw.output %_procdff_2 : i8
+  }
+  om.class @array_Class(%basepath: !om.basepath) {
+  }
+}
+

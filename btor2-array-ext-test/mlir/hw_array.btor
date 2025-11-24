@@ -1,0 +1,36 @@
+1 sort bitvec 16
+2 constd 1 0
+3 sort bitvec 2
+4 constd 3 1
+5 sort array 3 1
+6 state 5 
+7 constd 3 0
+8 write 5 6 7 2
+9 constd 3 1
+10 write 5 8 9 2
+11 constd 3 2
+12 write 5 10 11 2
+13 constd 3 3
+14 write 5 12 13 2
+15 read 1 14 4
+16 sort bitvec 1
+17 sort bitvec 3
+18 sort array 16 17
+19 state 18 
+20 constd 16 0
+21 constd 17 1
+22 write 18 19 20 21
+23 constd 16 1
+24 constd 17 5
+25 write 18 22 23 24
+module {
+  hw.module @test_array_create() {
+    %c0_i16 = hw.constant 0 : i16
+    %c1_i2 = hw.constant 1 : i2
+    %0 = hw.array_create %c0_i16, %c0_i16, %c0_i16, %c0_i16 : i16
+    %1 = hw.array_get %0[%c1_i2] : !hw.array<4xi16>, i2
+    %2 = hw.aggregate_constant [1 : i3, -3 : i3] : !hw.array<2xi3>
+    hw.output
+  }
+}
+

@@ -1,0 +1,36 @@
+1 sort bitvec 1
+2 input 1 clk
+3 sort bitvec 8
+4 state 3 _procdff_9
+5 sort bitvec 3
+6 sort array 5 3
+7 state 6 
+8 constd 3 1
+9 constd 3 2
+10 slice 5 4 2 0
+11 read 3 7 10
+12 add 3 4 9
+13 add 3 4 8
+14 output 11 out
+15 write 6 7 10 12
+16 next 6 7 15
+17 next 3 4 13
+module {
+  hw.module @array(in %clk : i1, out out : i8) {
+    %c1_i8 = hw.constant 1 : i8
+    %c2_i8 = hw.constant 2 : i8
+    %0 = seq.const_clock  low
+    %1 = seq.to_clock %clk
+    %_procdff_9 = seq.firreg %4 clock %1 {firrtl.random_init_start = 0 : ui64, sv.namehint = "counter"} : i8
+    %mem = seq.firmem 0, 1, undefined, port_order {prefix = ""} : <8 x 8>
+    %2 = seq.firmem.read_port %mem[%5], clock %0 : <8 x 8>
+    seq.firmem.write_port %mem[%5] = %3, clock %1 : <8 x 8>
+    %3 = comb.add %_procdff_9, %c2_i8 {sv.namehint = "_add_verilog_x_sv_10_7"} : i8
+    %4 = comb.add %_procdff_9, %c1_i8 {sv.namehint = "_add_verilog_x_sv_9_6"} : i8
+    %5 = comb.extract %_procdff_9 from 0 : (i8) -> i3
+    hw.output %2 : i8
+  }
+  om.class @array_Class(%basepath: !om.basepath) {
+  }
+}
+
